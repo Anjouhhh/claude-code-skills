@@ -8,6 +8,28 @@ A collection of skills for [Claude Code](https://claude.ai/code) — reusable wo
 |-------|-------------|
 | [file-organizer](./file-organizer/SKILL.md) | Scans a directory and moves files into categorized subfolders by type, name pattern, and age. Supports preview mode and auto mode. |
 
+## Installation
+
+### Install a single skill
+
+```bash
+git clone https://github.com/anjouhhh/claude-code-skills.git /tmp/claude-code-skills
+cp -r /tmp/claude-code-skills/file-organizer ~/.claude/skills/file-organizer
+```
+
+Replace `file-organizer` with the name of any skill in this repo.
+
+### Install all skills
+
+```bash
+git clone https://github.com/anjouhhh/claude-code-skills.git /tmp/claude-code-skills
+for skill in /tmp/claude-code-skills/*/; do
+  cp -r "$skill" ~/.claude/skills/
+done
+```
+
+After installing, restart Claude Code (or start a new session) for the skills to be picked up.
+
 ## Usage
 
 Invoke a skill using its name:
