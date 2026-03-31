@@ -1,11 +1,70 @@
 ---
 name: file-organizer
-description: File organization agent that scans a directory, classifies files by type/name/age, suggests a folder structure, and moves files safely. Use when the user wants to organize their Desktop, Downloads, or any messy folder. Supports --preview (dry run), --auto (skip confirmation), and --dir /absolute/path (required in non-interactive mode). TRIGGER when the user says "organize my files", "clean up my desktop", "sort my downloads", or similar.
+description: >
+  High-side-effect skill that scans a directory and moves files into a categorized
+  folder structure. Invoke ONLY when the user has explicitly asked to organize files
+  or has directly invoked this skill by name. Do NOT trigger from vague mentions of
+  messiness, clutter, or a busy folder — ask for explicit confirmation of intent first.
+  Requires explicit target confirmation before any files are moved. Supports --preview
+  (dry run), --auto (requires --dir), and --dir /absolute/path. Non-interactive mode
+  never guesses or infers a target directory.
 ---
 
 # File Organizer
 
 Scan a directory, classify files by type, name patterns, and age, then move them into a clean folder structure — safely, without ever deleting anything.
+
+## Critical Safety Rules
+
+These rules are mandatory and non-negotiable. They override any interpretation of convenience, helpfulness, or efficiency.
+
+1. **Never substitute one target directory for another.** If the user said "Desktop" and Desktop cannot be resolved, the result is an error — not "use Downloads instead."
+2. **`UNKNOWN` is a hard stop, not a candidate.** If platform-specific resolution returns `UNKNOWN`, stop immediately and ask the user for an explicit `--dir`. Do not map `UNKNOWN` to any other folder.
+3. **Never proceed past path resolution without showing the resolved absolute path.** Scanning, classification, and moving must not begin until the full absolute resolved path has been displayed to the user.
+4. **User intent and resolved path must be confirmed together before any action.** The user must confirm the resolved absolute path as their intended target — not just the move plan.
+5. **Ambiguity is always an error.** If the target cannot be determined with certainty, stop. Never guess.
+6. **Never operate on root, system, or home directories.** See the Dangerous Path Blocklist below.
+7. **This tool moves files. Treat it as a high-side-effect operation.** When in doubt between stopping and guessing, always stop.
+8. **Fallback is not a feature.** There is no fallback directory. There is no default directory. The absence of a resolvable target is an error condition, always.
+
+## Invocation Requirements
+
+This skill must only run when the user has **explicitly** asked to organize files or has directly invoked the `file-organizer` skill by name.
+
+- Indirect statements such as "my desktop is messy", "I have too many downloads", or "things are getting cluttered" are **not** sufficient to begin execution. Respond by asking: "Would you like me to run the file organizer on a specific folder?" — do not proceed until the answer is clearly yes.
+- Ambiguous intent → ask for clarification before doing anything.
+- If the environment supports skill invocation metadata, treat this skill as `manual-only`.
+
+## Execution Flow
+
+The following is the required order of operations. Steps 1–9 must complete before step 10 begins. No step may be skipped or reordered.
+
+```
+1.  Capture the raw user input — do not resolve or validate paths yet.
+2.  Classify the input type:
+      a. Explicit absolute path provided via --dir /absolute/path
+      b. Named location intent ("Desktop", "Downloads", "Documents")
+      c. Nothing provided
+3.  If --auto is set and --dir is absent → STOP immediately (hard error, see Step 1).
+4.  If no explicit --dir and mode is non-interactive → STOP immediately.
+5.  If interactive and no --dir:
+      → Resolve each named location using platform-aware APIs.
+      → Present a numbered menu with the full resolved absolute path and file count for each.
+      → Mark unresolvable locations as [not available on this system] — never make them selectable.
+      → Let the user select a candidate or enter a custom absolute path.
+6.  Normalize the selected/provided path to its absolute form.
+7.  Validate: exists / is a directory / readable / writable / not on blocklist.
+8.  Check for sync folder or network share. Warn if detected; require explicit confirmation.
+9.  Show the resolved absolute path. Ask: "You are about to organize files in: <absolute path>. Is this the correct target? [yes / no / choose again]"
+10. Scan the directory (top-level files only).
+11. Classify files using the taxonomy rules.
+12. Resolve destination collisions.
+13. Display the move plan.
+14. If --preview → stop. Print: "Preview complete. No files were moved."
+15. If not --auto → ask: "Proceed with this plan? [yes / no / edit]"
+16. Execute moves (mkdir -p then mv, absolute paths only, no shell expansion).
+17. Print summary report.
+```
 
 ## Arguments
 
@@ -29,6 +88,23 @@ When the user names a location like "Desktop" or "Downloads" rather than providi
 
 If the platform-specific resolution fails or the resolved path does not exist, the result is `UNKNOWN`. `UNKNOWN` is not a fallback — it means stop and ask the user to provide an explicit `--dir`.
 
+## Target Selection States
+
+Path selection passes through four distinct states. These are never combined into a single step.
+
+| State | Definition |
+|-------|------------|
+| **Intent** | What the user stated: "Desktop", "my downloads folder", or a literal path string |
+| **Resolved path** | The absolute path produced by platform-aware resolution (named locations) or normalization (explicit paths) |
+| **Validated** | The resolved path has passed all checks: exists, is a directory, readable, writable, not on the blocklist |
+| **Approved** | The user has explicitly confirmed that the resolved absolute path is the correct target |
+
+Rules:
+- A `UNKNOWN` resolved path is a terminal state — never map it to another folder.
+- Explicit path input and named location input are **different trust classes**: named locations require platform-aware API resolution; explicit paths are normalized as provided.
+- A path that exists on disk is not automatically validated or approved — all checks must still run.
+- **Approval at Step 9 (target path confirmation) is separate from approval at Step 15 (move plan confirmation).** Both are required. Neither substitutes for the other.
+
 ## Dangerous Path Blocklist
 
 Refuse to operate on any path that matches:
@@ -49,6 +125,8 @@ Before scanning, check whether the resolved path is inside a known sync folder:
 | iCloud Drive (macOS) | Path contains `/Library/Mobile Documents/` |
 | Dropbox | Path contains `/Dropbox/` or `\Dropbox\` |
 | Google Drive | Path contains `/Google Drive/` or `\Google Drive\` |
+| Network share (Windows) | Path starts with `\\` (UNC path) |
+| Network share (Unix/macOS) | Path is under `/net/`, `/mnt/`, `/media/`, or the mount entry in `/proc/mounts` lists type `nfs`, `cifs`, or `smbfs` |
 
 If a sync folder is detected, print a **warning** before proceeding:
 
@@ -58,7 +136,15 @@ If a sync folder is detected, print a **warning** before proceeding:
   Resolved path: <absolute path>
 ```
 
-Require explicit confirmation even if `--auto` is set.
+If a network share is detected, print:
+
+```
+⚠ Warning: This folder appears to be on a network share.
+  File operations may be slow, unreliable, or affect other users.
+  Resolved path: <absolute path>
+```
+
+Require explicit confirmation even if `--auto` is set — for both sync folders and network shares.
 
 ## File Taxonomy
 
@@ -130,6 +216,8 @@ Non-interactive mode does not resolve named locations like "Desktop".
 Usage: file-organizer --auto --dir /absolute/path/to/folder
 ```
 
+Non-interactive mode does not resolve named locations under any circumstances. Even if the platform could successfully resolve "Desktop", `--auto` mode requires an explicit `--dir`. Do not attempt resolution as a convenience fallback.
+
 ---
 
 ### Step 2 — Resolve Target Path
@@ -143,18 +231,22 @@ This step is separate from parsing. Resolve the user's intent to an absolute pat
 ```
 Which folder would you like to organize?
 
-  [1] Desktop    →  /Users/alice/Desktop              (23 files)
-  [2] Downloads  →  /Users/alice/Downloads            (156 files)
-  [3] Documents  →  /Users/alice/Documents            (342 files)
+  [1] Desktop    →  /Users/alice/Desktop                           (23 files)
+  [2] Downloads  →  /Users/alice/Library/CloudStorage/OneDrive/Downloads  (12 files) [⚠ OneDrive]
+  [3] Documents  →  /Users/alice/Documents                         (342 files)
   [4] Enter a custom path
+  [x] Desktop (Windows)  →  [not available on this system]
 
   [q] Quit
 ```
 
 - Show the full resolved absolute path next to each label.
 - Show the file count for each candidate so the user can sanity-check.
-- If a location cannot be resolved, show it as `[not found on this system]` and make it unselectable.
-- If the user selects [4], ask them to type the absolute path. Do not accept relative paths.
+- If a sync folder or network share is detected for a candidate, show a warning tag inline (e.g., `[⚠ OneDrive]`, `[⚠ network share]`).
+- If a location cannot be resolved, show it as `[not available on this system]` and make it **unselectable**. Entering an unresolvable option's number must produce an explicit error — not a silent skip, not a fallback.
+- If the user selects the custom path option, ask them to type an absolute path. Relative paths must be rejected with an error.
+
+**Non-interactive mode note:** If `--auto` is set, this entire branch is unreachable — `--auto` without `--dir` is caught and rejected in Step 1. This step runs only in interactive mode.
 
 **If resolution fails for all candidates and no `--dir` was given:** stop with:
 
@@ -174,33 +266,33 @@ Before scanning anything, validate the resolved path:
 3. **Is readable**: must be able to list its contents. If not → stop with error.
 4. **Is writable**: must be able to create files inside it. If not → stop with error.
 5. **Not on blocklist**: check against the Dangerous Path Blocklist above. If matched → stop with error. Do not ask for confirmation — just refuse.
-6. **Sync folder check**: check against the Sync Folder Detection table above. If matched → print warning (see above). Require explicit confirmation before continuing.
+6. **Sync folder and network share check**: check against the Sync Folder Detection table above. If matched → print warning (see above). Require explicit confirmation before continuing.
 7. **File count**: count top-level regular files. If count > 500 → print warning and require explicit confirmation even if `--auto` is set.
 
 ---
 
 ### Step 4 — Confirm Target (interactive mode only, skip if --auto with valid --dir)
 
-Show the confirmed target to the user before any scanning:
+Show the confirmed target to the user before any scanning. The user is confirming the **resolved absolute path** as their intended target — not the move plan. Make this explicit:
 
 ```
-Target confirmed: /Users/alice/Desktop
+You are about to organize files in: /Users/alice/Desktop
   Platform : macOS
   Files    : 23 regular files (4 hidden, 2 symlinks, 3 subdirectories — all skipped)
   Mode     : interactive
 
-Proceed with this folder? [yes / no / choose again]
+Is this the correct target? [yes / no / choose again]
 ```
 
 - **yes** → continue to Step 5
 - **no** → stop. Print: "Aborted. Nothing was changed."
 - **choose again** → return to Step 2
 
-In `--auto` mode with a valid `--dir`, print the target info to stdout for logging but do not prompt:
+In `--auto` mode with a valid `--dir`, print the target info to stdout before scanning begins. This is mandatory, not optional — it is the only record of the resolved target for log review:
 
 ```
 Target: /Users/alice/Desktop  (23 files)
-Mode: auto — confirmation skipped
+Mode: auto — target confirmation skipped
 ```
 
 ---
@@ -348,6 +440,19 @@ NOTES
 ```
 
 ---
+
+## Never Do These Things
+
+- **Never** substitute one named location for another. Desktop → Downloads is never acceptable. Neither is any other substitution.
+- **Never** proceed when path resolution returns `UNKNOWN` or is in any way ambiguous.
+- **Never** scan a directory that the user has not explicitly confirmed as the target.
+- **Never** operate on `/`, `~`, `C:\`, `D:\`, or any equivalent root or home directory (see Dangerous Path Blocklist).
+- **Never** treat the existence of a path on disk as proof it matches the user's intent.
+- **Never** skip the target path confirmation step (Workflow Step 4 / Execution Flow step 9) for a move operation.
+- **Never** use `~`, relative paths, or any shell expansion in `mv` or `mkdir` commands.
+- **Never** infer that `--auto` or any non-interactive mode grants permission to guess or resolve the target directory.
+- **Never** continue execution after a blocklist match — refuse and stop, no confirmation prompt.
+- **Never** delete files under any circumstances.
 
 ## Wrap Up
 
