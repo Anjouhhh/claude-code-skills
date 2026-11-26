@@ -1,6 +1,6 @@
 ---
 name: github-research
-description: Research, analyze, or understand a GitHub repository through a controlled iteration loop with experiment memory, trace logging, self-critique, and guardrails. Invoke with /auto-iteration <repo-url> [--iterations N].
+description: Research, analyze, or understand a GitHub repository through a controlled iteration loop with experiment memory, trace logging, self-critique, and guardrails. Invoke with /github-research <repo-url> [--iterations N].
 ---
 
 # GitHub Research Skill
@@ -22,7 +22,7 @@ This skill activates whenever the agent is asked to research, analyze, or unders
 
 This skill can be explicitly invoked using:
 
-`/auto-iteration <repo-url> [--iterations N]`
+`/github-research <repo-url> [--iterations N]`
 
 - default iterations = 3
 - optional override via `--iterations N` flag
