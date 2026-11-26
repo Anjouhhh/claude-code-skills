@@ -7,7 +7,7 @@ A collection of skills for [Claude Code](https://claude.ai/code) — reusable wo
 | Skill | Description |
 |-------|-------------|
 | [file-organizer](./file-organizer/SKILL.md) | Scans a directory and moves files into categorized subfolders by type, name pattern, and age. Supports preview mode and auto mode. |
-| [github-research](./github-research/SKILL.md) | Researches a GitHub repository through a controlled iteration loop with experiment memory, trace logging, and self-critique. Invoke with `/auto-iteration <repo-url>`. |
+| [github-research](./github-research/SKILL.md) | Researches a GitHub repository through a controlled iteration loop with experiment memory, trace logging, and self-critique. Invoke with `/github-research <repo-url>`. |
 
 ## Installation
 
